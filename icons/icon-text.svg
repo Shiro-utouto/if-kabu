@@ -1,24 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs>
-    <radialGradient id="bg" cx="25%" cy="20%" r="95%">
-      <stop offset="0" stop-color="#2d5397"/>
-      <stop offset="1" stop-color="#162e57"/>
-    </radialGradient>
-  </defs>
+  <defs><radialGradient id="bg" cx="25%" cy="20%" r="95%"><stop offset="0" stop-color="#2d5397"/><stop offset="1" stop-color="#162e57"/></radialGradient></defs>
   <rect width="512" height="512" fill="url(#bg)"/>
-  <g transform="translate(256 178) scale(0.8) translate(-283 -245)">
-  <!-- 実際の値動き（ローソク足） -->
-  <g stroke-linecap="round">
-    <line x1="146" y1="262" x2="146" y2="404" stroke="#ff6b7d" stroke-width="12"/>
-    <rect x="116" y="292" width="60" height="78" rx="12" fill="#ff6b7d"/>
-    <line x1="240" y1="196" x2="240" y2="352" stroke="#ff6b7d" stroke-width="12"/>
-    <rect x="210" y="222" width="60" height="100" rx="12" fill="#ff6b7d"/>
-    <line x1="334" y1="140" x2="334" y2="292" stroke="#ff6b7d" stroke-width="12"/>
-    <rect x="304" y="160" width="60" height="104" rx="12" fill="#ff6b7d"/>
-  </g>
-  <!-- もしもの先（点線） -->
-  <path d="M372 156 L418 112" stroke="#ffffff" stroke-width="13" stroke-linecap="round" stroke-dasharray="0.1 21"/>
-  <circle cx="432" cy="98" r="19" fill="#ffffff"/>
-  </g>
+  <line x1="76" y1="246.7" x2="76" y2="332.8" stroke="#ff6b7d" stroke-width="7" stroke-linecap="round"/><rect x="61.0" y="261.1" width="30" height="50.2" rx="6" fill="#ff6b7d"/><line x1="124" y1="250.3" x2="124" y2="307.7" stroke="#8fb2f0" stroke-width="7" stroke-linecap="round"/><rect x="109.0" y="261.1" width="30" height="32.3" rx="6" fill="#8fb2f0"/><line x1="172" y1="218.0" x2="172" y2="304.1" stroke="#ff6b7d" stroke-width="7" stroke-linecap="round"/><rect x="157.0" y="228.8" width="30" height="64.6" rx="6" fill="#ff6b7d"/><line x1="220" y1="210.8" x2="220" y2="275.4" stroke="#8fb2f0" stroke-width="7" stroke-linecap="round"/><rect x="205.0" y="228.8" width="30" height="35.9" rx="6" fill="#8fb2f0"/><line x1="268" y1="171.4" x2="268" y2="275.4" stroke="#ff6b7d" stroke-width="7" stroke-linecap="round"/><rect x="253.0" y="182.1" width="30" height="82.5" rx="6" fill="#ff6b7d"/><line x1="316" y1="167.8" x2="316" y2="218.0" stroke="#8fb2f0" stroke-width="7" stroke-linecap="round"/><rect x="301.0" y="182.1" width="30" height="25.1" rx="6" fill="#8fb2f0"/><line x1="364" y1="117.5" x2="364" y2="218.0" stroke="#ff6b7d" stroke-width="7" stroke-linecap="round"/><rect x="349.0" y="131.9" width="30" height="75.4" rx="6" fill="#ff6b7d"/><path d="M390 127.9 L416 75.9" stroke="#fff" stroke-width="11" stroke-linecap="round" stroke-dasharray="0.1 20"/><circle cx="428" cy="65.9" r="16" fill="#fff"/>
   <text x="256" y="448" text-anchor="middle" font-family="Noto Sans CJK JP" font-weight="900" font-size="106" letter-spacing="4" fill="#ffffff">もし株</text>
 </svg>
