@@ -26,8 +26,9 @@ def num(x, digits=2):
 
 
 def drop_glitches(rows):
-    """Yahoo のデータにたまに混ざる、桁がずれた行（例: 価格が1/100）を取り除く。
-    前後5営業日の終値の中央値から極端に離れている行を捨てる。"""
+    """Yahoo のデータにたまに混ざる、桁がずれた行（例: 株式分割の前後で価格が1/100）を直す。
+    前後5営業日の終値の中央値から極端に離れている行は、
+    ちょうど10の累乗倍ずれているなら桁を戻し、そうでなければ捨てる。"""
     closes = [r[4] for r in rows]
     keep = []
     for i, r in enumerate(rows):
@@ -35,8 +36,16 @@ def drop_glitches(rows):
         if near:
             near = sorted(near)
             med = near[len(near) // 2]
-            if not (0.6 <= r[4] / med <= 1.67):
-                print(f"  - {r[0]} の行を除外（終値 {r[4]} / 周辺 {med}）")
+            ratio = r[4] / med
+            if not (0.6 <= ratio <= 1.67):
+                k = round(math.log10(ratio))
+                if k != 0 and 0.75 <= ratio / 10 ** k <= 1.33:
+                    f = 10 ** -k
+                    fixed = [r[0]] + [num(v * f) for v in r[1:5]] + [int(r[5] / f)]
+                    print(f"  - {r[0]} の桁ずれを修正（終値 {r[4]} → {fixed[4]}）")
+                    keep.append(fixed)
+                else:
+                    print(f"  - {r[0]} の行を除外（終値 {r[4]} / 周辺 {med}）")
                 continue
         keep.append(r)
     return keep

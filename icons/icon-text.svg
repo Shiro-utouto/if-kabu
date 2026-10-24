@@ -9,8 +9,8 @@
   <g transform="translate(256 178) scale(0.8) translate(-283 -245)">
   <!-- 実際の値動き（ローソク足） -->
   <g stroke-linecap="round">
-    <line x1="146" y1="262" x2="146" y2="404" stroke="#a9c4f2" stroke-width="12"/>
-    <rect x="116" y="292" width="60" height="78" rx="12" fill="#a9c4f2"/>
+    <line x1="146" y1="262" x2="146" y2="404" stroke="#ff6b7d" stroke-width="12"/>
+    <rect x="116" y="292" width="60" height="78" rx="12" fill="#ff6b7d"/>
     <line x1="240" y1="196" x2="240" y2="352" stroke="#ff6b7d" stroke-width="12"/>
     <rect x="210" y="222" width="60" height="100" rx="12" fill="#ff6b7d"/>
     <line x1="334" y1="140" x2="334" y2="292" stroke="#ff6b7d" stroke-width="12"/>
