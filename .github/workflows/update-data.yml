@@ -1,0 +1,51 @@
+name: 株価データ更新
+
+on:
+  schedule:
+    # 平日 16:40 と 20:10（日本時間）に実行。cron は UTC 表記
+    - cron: "40 7 * * 1-5"
+    - cron: "10 11 * * 1-5"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - tickers.json
+      - scripts/fetch.py
+      - .github/workflows/update-data.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: ライブラリをインストール
+        run: pip install --upgrade yfinance pandas
+
+      - name: 日足データを取得
+        run: python scripts/fetch.py
+
+      - name: 変更があればコミット
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then
+            echo "変更なし"
+            exit 0
+          fi
+          git commit -m "株価データ更新 $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M')"
+          git pull --rebase origin main
+          git push origin HEAD:main
