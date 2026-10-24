@@ -8,7 +8,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="if-kabu">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231d3a6b'/%3E%3Cpath d='M9 8v16M16 6v20M23 10v12' stroke='%23fff' stroke-width='2'/%3E%3Crect x='6.5' y='12' width='5' height='8' fill='%23e8475a'/%3E%3Crect x='13.5' y='10' width='5' height='9' fill='%23fff'/%3E%3Crect x='20.5' y='13' width='5' height='6' fill='%23e8475a'/%3E%3C/svg%3E">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
 <title>if-kabu</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -109,6 +111,17 @@ button.item:active{background:var(--surface-2)}
 .emptybox{background:var(--surface);border-radius:16px;padding:22px 18px;text-align:center;color:var(--ink-2);font-size:14px;box-shadow:var(--shadow)}
 .emptybox .primary{margin-top:12px;max-width:220px}
 
+/* スワイプで削除 */
+.swipe{position:relative;overflow:hidden;border-bottom:1px solid var(--line)}
+.swipe:last-child{border-bottom:0}
+.swipe .item{border-bottom:0}
+.swipe-del{position:absolute;top:0;right:0;bottom:0;width:88px;background:var(--up);color:#fff;font-weight:700;font-size:14px;visibility:hidden}
+.swipe.open .swipe-del,.swipe.dragging .swipe-del{visibility:visible}
+.swipe-row{position:relative;background:var(--surface);transition:transform .22s ease;touch-action:pan-y;-webkit-user-select:none;user-select:none}
+.toast.act{pointer-events:auto}
+.toast-act{color:#9dbcff;font-weight:700;margin-left:14px;font-size:13px}
+@media (prefers-reduced-motion: reduce){.swipe-row{transition:none}}
+
 /* 検索・並べ替え */
 .search{width:100%;height:42px;border-radius:12px;border:1px solid var(--line);background:var(--surface);padding:0 14px;margin-bottom:10px}
 .chips{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;scrollbar-width:none}
@@ -165,7 +178,7 @@ button.item:active{background:var(--surface-2)}
 /* 口座開設 */
 .setup{max-width:480px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 40px) 20px 40px}
 .setup .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;margin-bottom:28px}
-.setup .logo svg{width:36px;height:36px}
+.setup .logo img{width:40px;height:40px;border-radius:10px}
 .setup h1{font-size:26px;line-height:1.35;margin:0 0 10px}
 .setup p{color:var(--ink-2);margin:0 0 24px;font-size:14px}
 .field-l{font-size:13px;color:var(--ink-2);margin-bottom:6px;display:block}
@@ -208,7 +221,7 @@ dialog::backdrop{background:rgba(10,14,20,.5)}
 .toggle{display:flex;align-items:center;gap:10px;font-size:14px;margin:4px 0 16px}
 .toggle input{width:20px;height:20px;accent-color:var(--brand)}
 
-.toast{position:fixed;left:50%;bottom:calc(140px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(12px);background:var(--ink);color:var(--surface);padding:10px 16px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:20;max-width:calc(100% - 32px);text-align:center}
+.toast{position:fixed;left:50%;bottom:calc(140px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(12px);background:var(--ink);color:var(--surface);padding:10px 16px;border-radius:999px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:20;max-width:calc(100% - 32px);text-align:center;white-space:nowrap}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 .state{padding:80px 20px;text-align:center;color:var(--ink-2);font-size:14px}
 .foot{font-size:11px;color:var(--ink-3);text-align:center;margin-top:24px}
@@ -325,21 +338,31 @@ function dayLabel(date) {
   if (!S.replay || !S.hideDate) return ymd(date);
   const n = S.replay.days[date]; return n ? n + "日目" : "開始前";
 }
+// シートが開いているときはトーストをシートの中に置く（背面だと押せないため）
+const TOAST = document.getElementById("toast");
+function toastHost() { const sh = document.getElementById("sheet"); const host = sh.open ? sh : document.body; if (TOAST.parentElement !== host) host.append(TOAST); return TOAST; }
 function toast(msg) {
-  const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("show");
+  const t = toastHost(); t.textContent = msg; t.classList.remove("act"); t.classList.add("show");
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show"), 2200);
+}
+function toastUndo(msg, undo) {
+  const t = toastHost(); t.textContent = msg;
+  const b = document.createElement("button"); b.className = "toast-act"; b.textContent = "元に戻す";
+  b.onclick = () => { clearTimeout(toast._t); t.classList.remove("show", "act"); undo(); };
+  t.append(b); t.classList.add("show", "act");
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove("show", "act"), 4500);
 }
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
 const ICON = {
   home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg>',
-  market: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16M7 16V9M7 9V6M12 16v-5M12 11V5M17 16v-3M17 13V8"/><rect x="5.5" y="9" width="3" height="5" fill="currentColor" stroke="none"/><rect x="10.5" y="7" width="3" height="6" fill="currentColor" stroke="none"/><rect x="15.5" y="9.5" width="3" height="4" fill="currentColor" stroke="none"/></svg>',
+  market: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3.5v17M16 5v13"/><rect x="5.5" y="8" width="5" height="8" rx="1.2" fill="currentColor" fill-opacity=".18"/><rect x="13.5" y="7.5" width="5" height="6.5" rx="1.2"/></svg>',
   trades: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M9 9h6M9 13h6M9 17h3"/></svg>',
   replay: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/><path d="M12 8v4l3 2"/></svg>',
   gear: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   back: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 5l-7 7 7 7"/></svg>',
   chev: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>',
-  logo: '<svg viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#1d3a6b"/><path d="M9 8v16M16 6v20M23 10v12" stroke="#fff" stroke-width="2"/><rect x="6.5" y="12" width="5" height="8" fill="#e8475a"/><rect x="13.5" y="10" width="5" height="9" fill="#fff"/><rect x="20.5" y="13" width="5" height="6" fill="#e8475a"/></svg>'
+  logo: '<img src="icons/icon.svg" alt="">'
 };
 
 /* ================= 画面 ================= */
@@ -379,15 +402,19 @@ function setupHTML() {
     <div class="err" id="amtErr"></div>
     <p class="note">今日の日付が開始日として記録されます。口座はあとから作り直せて、それまでの成績は残ります。</p>
     <button class="primary" data-act="open">この金額で始める</button>
-    ${S.archive.length ? `<div class="sec-h"><h2>これまでの口座</h2></div>${archiveList()}` : ""}
+    ${S.archive.length ? `<div class="sec-h"><h2>これまでの口座</h2>${swipeHint}</div>${archiveList()}` : ""}
   </div>`;
 }
 
+function swipeRow(kind, i, inner) {
+  return `<div class="swipe"><button class="swipe-del" data-del="${kind}:${i}" tabindex="-1">削除</button><div class="swipe-row item">${inner}</div></div>`;
+}
+const swipeHint = `<span>左にスワイプで削除</span>`;
 function archiveList() {
-  return `<div class="list">${S.archive.map(a => {
+  return `<div class="list">${S.archive.map((a, i) => {
     const g = a.final - a.init;
-    return `<div class="item"><div class="main"><div class="nm">${man(a.init)}で開始</div><div class="sub">${ymd(a.startedAt.slice(0, 10))} 〜 ${ymd(a.endedAt.slice(0, 10))}・取引${a.trades}回</div></div>
-      <div class="rt"><div class="v">¥${yen(a.final)}</div><div class="s ${tone(g)}">${sYen(g)}（${pct(g / a.init * 100)}）</div></div></div>`;
+    return swipeRow("archive", i, `<div class="main"><div class="nm">${man(a.init)}で開始</div><div class="sub">${ymd(a.startedAt.slice(0, 10))} 〜 ${ymd(a.endedAt.slice(0, 10))}・取引${a.trades}回</div></div>
+      <div class="rt"><div class="v">¥${yen(a.final)}</div><div class="s ${tone(g)}">${sYen(g)}（${pct(g / a.init * 100)}）</div></div>`);
   }).join("")}</div>`;
 }
 
@@ -586,9 +613,9 @@ function replayHTML() {
     <label class="toggle"><input type="checkbox" id="hideDate" ${S.hideDate ? "checked" : ""}>日付を隠す（先入観なしで練習）</label>
     <button class="primary" data-act="rstart">ランダムな日から始める</button>
   </div>
-  ${S.replayResults.length ? `<div class="sec-h"><h2>これまでの練習</h2></div><div class="list">${S.replayResults.slice(0, 20).map(r => `
-    <div class="item"><div class="main"><div class="nm">${ymd(r.start)} 〜 ${ymd(r.end)}</div><div class="sub">${r.days}日間・取引${r.trades}回・${man(r.init)}</div></div>
-    <div class="rt"><div class="v ${tone(r.gain)}">${sYen(r.gain)}</div><div class="s ${tone(r.gain)}">${pct(r.gain / r.init * 100)}</div></div></div>`).join("")}</div>` : ""}`;
+  ${S.replayResults.length ? `<div class="sec-h"><h2>これまでの練習</h2>${swipeHint}</div><div class="list">${S.replayResults.slice(0, 30).map((r, i) => swipeRow("rres", i, `
+    <div class="main"><div class="nm">${ymd(r.start)} 〜 ${ymd(r.end)}</div><div class="sub">${r.days}日間・取引${r.trades}回・${man(r.init)}</div></div>
+    <div class="rt"><div class="v ${tone(r.gain)}">${sYen(r.gain)}</div><div class="s ${tone(r.gain)}">${pct(r.gain / r.init * 100)}</div></div>`)).join("")}</div>` : ""}`;
 
   const r = S.replay, s = summary(r, "replay"), code = S.replayCode;
   return `
@@ -751,7 +778,7 @@ function placeOrder() {
 }
 
 /* ================= シート（設定・銘柄選択・結果） ================= */
-function openSheet(html) { const d = document.getElementById("sheet"); d.innerHTML = html; if (!d.open) d.showModal(); }
+function openSheet(html, kind = "") { ui.sheetKind = kind; const d = document.getElementById("sheet"); d.innerHTML = html; if (!d.open) d.showModal(); }
 
 function settingsSheet() {
   const a = S.acct;
@@ -765,8 +792,8 @@ function settingsSheet() {
     </dl>
     <button class="ghost danger" data-act="restart">口座を作り直す</button>
     <p class="sheet-note">いまの口座の成績は「これまでの口座」に残り、新しい金額で始め直せます。</p>
-    ${S.archive.length ? `<div class="sec-h"><h2>これまでの口座</h2></div>${archiveList()}` : ""}
-  </div>`);
+    ${S.archive.length ? `<div class="sec-h"><h2>これまでの口座</h2>${swipeHint}</div>${archiveList()}` : ""}
+  </div>`, "settings");
 }
 function restartConfirm() {
   openSheet(`<div class="sheet-h"><h3>口座を作り直しますか？</h3><button class="textbtn" data-act="close">やめる</button></div>
@@ -809,6 +836,50 @@ function replayEnd() {
     <button class="primary" data-act="close">閉じる</button></div>`);
 }
 
+/* ================= スワイプで削除 ================= */
+function deleteRecord(kind, i) {
+  const list = kind === "archive" ? S.archive : S.replayResults;
+  const [item] = list.splice(i, 1); if (!item) return;
+  save(); refreshLists();
+  toastUndo(kind === "archive" ? "口座の記録を削除しました" : "練習の記録を削除しました", () => { list.splice(i, 0, item); save(); refreshLists(); });
+}
+function refreshLists() {
+  const sh = document.getElementById("sheet");
+  if (sh.open && ui.sheetKind === "settings") settingsSheet();
+  render();
+}
+const OPEN_X = -88, FULL_X = -150;
+let sw = null;
+function closeSwipe(el) { el.classList.remove("open"); el.querySelector(".swipe-row").style.transform = ""; }
+document.addEventListener("pointerdown", e => {
+  const opened = document.querySelector(".swipe.open");
+  const row = e.target.closest(".swipe-row");
+  if (opened && !e.target.closest(".swipe-del") && (!row || row.parentElement !== opened)) closeSwipe(opened);
+  if (!row) return;
+  sw = { row, x: e.clientX, y: e.clientY, base: row.parentElement.classList.contains("open") ? OPEN_X : 0, t: 0, drag: false, id: e.pointerId };
+});
+document.addEventListener("pointermove", e => {
+  if (!sw || e.pointerId !== sw.id) return;
+  const dx = e.clientX - sw.x, dy = e.clientY - sw.y;
+  if (!sw.drag) {
+    if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) { sw.drag = true; sw.row.style.transition = "none"; sw.row.parentElement.classList.add("dragging"); try { sw.row.setPointerCapture(e.pointerId); } catch {} }
+    else if (Math.abs(dy) > 8) { sw = null; return; }
+    else return;
+  }
+  sw.t = Math.max(-200, Math.min(0, sw.base + dx));
+  sw.row.style.transform = `translateX(${sw.t}px)`;
+});
+function endSwipe() {
+  if (!sw) return; const s = sw; sw = null; s.row.style.transition = "";
+  const box = s.row.parentElement; setTimeout(() => box.classList.remove("dragging"), 250);
+  if (!s.drag) { if (s.base < 0) closeSwipe(box); return; }
+  if (s.t <= FULL_X) { s.row.style.transform = "translateX(-100%)"; const [k, i] = box.querySelector(".swipe-del").dataset.del.split(":"); setTimeout(() => deleteRecord(k, +i), 180); }
+  else if (s.t < OPEN_X / 2) { box.classList.add("open"); s.row.style.transform = `translateX(${OPEN_X}px)`; }
+  else closeSwipe(box);
+}
+document.addEventListener("pointerup", endSwipe);
+document.addEventListener("pointercancel", endSwipe);
+
 /* ================= ナビゲーション ================= */
 async function openDetail(code) {
   ui.scroll[S.tab] = window.scrollY; await ensure([code]); ui.detail = code; ui.hover = null; render(); window.scrollTo(0, 0);
@@ -821,6 +892,7 @@ function goTab(tab) {
 document.addEventListener("click", async e => {
   const t = e.target.closest("button"); if (!t) return;
   const ds = t.dataset, act = ds.act;
+  if (ds.del) { const [k, i] = ds.del.split(":"); return deleteRecord(k, +i); }
   if (ds.tab) return goTab(ds.tab);
   if (ds.open) { if (document.getElementById("sheet").open) document.getElementById("sheet").close(); return openDetail(ds.open); }
   if (ds.preset) { ui.setupAmt = +ds.preset; return render(); }
