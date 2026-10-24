@@ -25,6 +25,23 @@ def num(x, digits=2):
     return int(v) if v == int(v) else v
 
 
+def drop_glitches(rows):
+    """Yahoo のデータにたまに混ざる、桁がずれた行（例: 価格が1/100）を取り除く。
+    前後5営業日の終値の中央値から極端に離れている行を捨てる。"""
+    closes = [r[4] for r in rows]
+    keep = []
+    for i, r in enumerate(rows):
+        near = closes[max(0, i - 5):i] + closes[i + 1:i + 6]
+        if near:
+            near = sorted(near)
+            med = near[len(near) // 2]
+            if not (0.6 <= r[4] / med <= 1.67):
+                print(f"  - {r[0]} の行を除外（終値 {r[4]} / 周辺 {med}）")
+                continue
+        keep.append(r)
+    return keep
+
+
 def fetch_one(code: str):
     sym = f"{code}.T"
     last_err = None
@@ -44,6 +61,7 @@ def fetch_one(code: str):
                 vol = 0 if vol is None or (isinstance(vol, float) and math.isnan(vol)) else int(vol)
                 rows.append([idx.strftime("%Y-%m-%d"), num(r["Open"]), num(r["High"]),
                              num(r["Low"]), num(r["Close"]), vol])
+            rows = drop_glitches(rows)
             if len(rows) < 20:
                 raise RuntimeError(f"too few rows ({len(rows)})")
             return rows
@@ -74,11 +92,12 @@ def main():
             saved = json.loads(path.read_text(encoding="utf-8"))
             r = saved["rows"]
             index.append({"code": code, "name": name, "last": r[-1][0],
-                          "close": r[-1][4], "prev": r[-2][4] if len(r) > 1 else r[-1][4]})
+                          "close": r[-1][4], "prev": r[-2][4] if len(r) > 1 else r[-1][4],
+                          "spark": [x[4] for x in r[-30:]]})
         time.sleep(0.5)
 
     (DATA / "index.json").write_text(
-        json.dumps({"updated": now, "tickers": index}, ensure_ascii=False, indent=1),
+        json.dumps({"updated": now, "tickers": index}, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8")
     print(f"done: {ok}/{len(tickers)} updated")
     if ok == 0:
