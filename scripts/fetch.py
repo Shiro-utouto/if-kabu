@@ -70,7 +70,6 @@ def fetch_one(code: str):
                 vol = 0 if vol is None or (isinstance(vol, float) and math.isnan(vol)) else int(vol)
                 rows.append([idx.strftime("%Y-%m-%d"), num(r["Open"]), num(r["High"]),
                              num(r["Low"]), num(r["Close"]), vol])
-            rows = drop_glitches(rows)
             if len(rows) < 20:
                 raise RuntimeError(f"too few rows ({len(rows)})")
             return rows
@@ -79,6 +78,18 @@ def fetch_one(code: str):
             time.sleep(3 * (attempt + 1))
     print(f"  ! {code}: {last_err}", file=sys.stderr)
     return None
+
+
+def merge(old_rows, new_rows):
+    """保存済みのデータに、取ってきたデータを重ねる。
+    Yahoo はたまに最新の日が抜けた古いデータを返すので、丸ごと置き換えず、
+    同じ日付は新しい値で上書きし、どちらか片方にしかない日はそのまま残す。"""
+    by_date = {r[0]: r for r in old_rows}
+    added = [r[0] for r in new_rows if r[0] not in by_date]
+    for r in new_rows:
+        by_date[r[0]] = r
+    merged = drop_glitches([by_date[d] for d in sorted(by_date)])
+    return merged, added
 
 
 def main():
@@ -93,6 +104,10 @@ def main():
         rows = fetch_one(code)
         path = DATA / f"{code}.json"
         if rows:
+            old = json.loads(path.read_text(encoding="utf-8"))["rows"] if path.exists() else []
+            fetched_last = rows[-1][0]
+            rows, added = merge(old, rows)
+            print(f"  取得 {fetched_last} まで → 保存 {rows[-1][0]} まで（追加: {', '.join(added[-3:]) or 'なし'}）")
             path.write_text(json.dumps({"code": code, "name": name, "rows": rows},
                                        ensure_ascii=False, separators=(",", ":")),
                             encoding="utf-8")
