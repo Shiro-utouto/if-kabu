@@ -95,7 +95,11 @@ def merge(old_rows, new_rows):
 def main():
     tickers = json.loads((ROOT / "tickers.json").read_text(encoding="utf-8"))
     DATA.mkdir(exist_ok=True)
-    now = datetime.now(JST).strftime("%Y-%m-%d %H:%M")
+    now_dt = datetime.now(JST)
+    now = now_dt.strftime("%Y-%m-%d %H:%M")
+    today = now_dt.strftime("%Y-%m-%d")
+    # 東証の大引けは 15:30。それより前に取った今日の行は、取引途中の値（終値は現在値）
+    session_open = now_dt.strftime("%H:%M") < "15:35"
     index = []
     ok = 0
     for t in tickers:
@@ -115,9 +119,12 @@ def main():
         if path.exists():
             saved = json.loads(path.read_text(encoding="utf-8"))
             r = saved["rows"]
-            index.append({"code": code, "name": name, "last": r[-1][0],
-                          "close": r[-1][4], "prev": r[-2][4] if len(r) > 1 else r[-1][4],
-                          "spark": [x[4] for x in r[-30:]]})
+            entry = {"code": code, "name": name, "last": r[-1][0],
+                     "close": r[-1][4], "prev": r[-2][4] if len(r) > 1 else r[-1][4],
+                     "spark": [x[4] for x in r[-30:]]}
+            if r[-1][0] == today and session_open:
+                entry["partial"] = True
+            index.append(entry)
         time.sleep(0.5)
 
     (DATA / "index.json").write_text(

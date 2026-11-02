@@ -196,9 +196,9 @@ dialog::backdrop{background:rgba(10,14,20,.5)}
 .sheet-h{position:sticky;top:0;background:var(--surface);display:flex;align-items:center;justify-content:space-between;padding:16px 18px 10px;border-bottom:1px solid var(--line);z-index:1}
 .sheet-h h3{margin:0;font-size:17px}
 .sheet-b{padding:16px 18px calc(20px + env(safe-area-inset-bottom))}
-.ordername{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:14px}
+.ordername{margin-bottom:14px}
 .ordername b{font-size:16px}
-.ordername span{font-size:12px;color:var(--ink-3)}
+.ordername span{display:block;font-size:12px;color:var(--ink-3);margin-top:2px}
 .qtyrow{display:flex;gap:8px;align-items:center}
 .step{width:48px;height:48px;border-radius:12px;background:var(--surface-2);font-size:22px}
 .qty{flex:1;min-width:0;height:48px;border-radius:12px;border:1px solid var(--line);background:var(--surface);text-align:center;font-size:20px;font-weight:700}
@@ -208,6 +208,13 @@ dialog::backdrop{background:rgba(10,14,20,.5)}
 .kv dt{color:var(--ink-2)}.kv dd{margin:0;font-weight:500}
 .sheet-note{font-size:11px;color:var(--ink-3);margin:10px 0 0}
 .result-big{font-size:34px;font-weight:700;margin:4px 0 12px}
+
+/* 約定タイミング */
+.modeseg{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:var(--surface-2);border-radius:12px;padding:4px;margin-bottom:14px}
+.modeseg button{padding:7px 4px;border-radius:9px;font-size:13px;color:var(--ink-2);line-height:1.35}
+.modeseg button[aria-pressed="true"]{background:var(--surface);color:var(--ink);font-weight:700;box-shadow:0 1px 3px rgba(23,32,44,.12)}
+.modeseg small{display:block;font-size:11px;font-weight:400;color:var(--ink-3)}
+.live{display:inline-block;font-size:11px;font-weight:700;color:var(--up);background:var(--up-bg);border-radius:5px;padding:0 6px;margin-left:6px;vertical-align:1px}
 
 /* リプレイ */
 .rp-top{display:flex;align-items:center;justify-content:space-between;background:var(--surface);border-radius:16px;box-shadow:var(--shadow);padding:12px 14px}
@@ -249,9 +256,9 @@ const ASSET_RANGES = [["1週", 5], ["1か月", 22], ["3か月", 66], ["全期間
 const SEG_COLORS = ["#2c5193", "#d0812e", "#2e8b78", "#8a5bb0", "#c2455a", "#6e8fbf"];
 
 /* ================= 状態 ================= */
-const newBook = init => ({ init, cash: init, pos: {}, trades: [], realized: 0 });
+const newBook = init => ({ init, cash: init, pos: {}, trades: [], realized: 0, pending: [] });
 const DEFAULT = { acct: null, archive: [], unit: 100, range: 66, assetRange: 0, tab: "home",
-                  replay: null, replayCash: 1_000_000, hideDate: true, replayCode: "7203", replayResults: [] };
+                  replay: null, replayCash: 1_000_000, hideDate: true, replayCode: "7203", replayResults: [], fillMode: "open" };
 let S = Object.assign({}, DEFAULT, load() || {});
 const ui = { detail: null, scroll: {}, hover: null, assetHover: null, order: null, qty: 100, sort: "code", q: "", setupAmt: 1_000_000 };
 let IDX = null;
@@ -298,6 +305,57 @@ function summary(b, ctx) {
   }
   return { mv, cost, day, total: b.cash + mv, unreal: mv - cost, gain: b.cash + mv - b.init };
 }
+// 予約注文（次の始値で約定）
+const pend = b => (b.pending ||= []);
+const reservedCash = (b, ctx) => pend(b).filter(o => o.side === "buy").reduce((t, o) => t + o.qty * (priceOf(o.code, ctx) ?? 0), 0);
+const availCash = (b, ctx) => Math.max(0, b.cash - reservedCash(b, ctx));
+const sellable = (b, code) => (b.pos[code]?.qty || 0) - pend(b).filter(o => o.side === "sell" && o.code === code).reduce((t, o) => t + o.qty, 0);
+// 取引時間中に取った今日の行（終値ではなく現在値）か
+const isPartial = (code, ctx) => ctx !== "replay" && !!tInfo(code)?.partial && tInfo(code).last === DATA[code]?.rows.at(-1)?.[0];
+
+function execTrade(b, code, side, n, p, rec) {
+  const pos = b.pos[code] || { qty: 0, cost: 0 };
+  if (side === "buy") { b.cash -= p * n; pos.qty += n; pos.cost += p * n; b.pos[code] = pos; }
+  else {
+    const avg = pos.cost / pos.qty, pl = (p - avg) * n;
+    b.cash += p * n; b.realized += pl; pos.qty -= n; pos.cost -= avg * n; rec.pl = pl;
+    if (pos.qty <= 0) delete b.pos[code]; else b.pos[code] = pos;
+  }
+  b.trades.unshift(rec); if (b.trades.length > 2000) b.trades.length = 2000;
+}
+
+// after より後の最初の取引日の始値で約定させる。買いで余力が足りなければ買える分だけ
+function fillPending(b, ctx) {
+  const list = pend(b); if (!list.length) return [];
+  const lim = ctx === "replay" ? S.replay.date : "9999-12-31";
+  const ready = [], keep = [];
+  for (const o of list) {
+    const rows = DATA[o.code]?.rows; const row = rows && rows[upto(rows, o.after)];
+    if (row && row[0] <= lim) ready.push([o, row]); else keep.push(o);
+  }
+  ready.sort((x, y) => x[1][0].localeCompare(y[1][0]) || (x[0].side === "sell" ? 0 : 1) - (y[0].side === "sell" ? 0 : 1));
+  const out = [];
+  for (const [o, row] of ready) {
+    const p = row[1]; let n = o.qty, note = "";
+    if (o.side === "buy") {
+      const max = Math.floor(b.cash / p / o.unit) * o.unit;
+      if (max < n) { n = Math.max(0, max); note = n ? "余力不足のため一部約定" : "余力不足のため失効"; }
+    } else {
+      const have = b.pos[o.code]?.qty || 0;
+      if (have < n) { n = have; note = n ? "保有不足のため一部約定" : "保有がないため失効"; }
+    }
+    const res = { o, n, p, d: row[0], note };
+    if (n > 0) {
+      const rec = { d: row[0], code: o.code, side: o.side, qty: n, p, open: true };
+      if (ctx === "replay") rec.day = S.replay.days[row[0]] ?? S.replay.day; else { rec.at = row[0] + " 09:00"; rec.placed = o.placedAt; }
+      execTrade(b, o.code, o.side, n, p, rec); res.pl = rec.pl;
+    }
+    out.push(res);
+  }
+  b.pending = keep;
+  return out;
+}
+
 function ma(rows, n) {
   const out = new Array(rows.length).fill(null); let s = 0;
   for (let i = 0; i < rows.length; i++) { s += rows[i][4]; if (i >= n) s -= rows[i - n][4]; if (i >= n - 1) out[i] = s / n; }
@@ -307,7 +365,7 @@ function ma(rows, n) {
 function assetSeries(a) {
   const cal = (DATA[CAL]?.rows || []).map(r => r[0]).filter(d => d >= a.startDate);
   if (!cal.length) cal.push(a.startDate);
-  const tr = [...a.trades].reverse(); let ti = 0, cash = a.init; const pos = {};
+  const tr = [...a.trades].reverse().sort((x, y) => x.d.localeCompare(y.d)); let ti = 0, cash = a.init; const pos = {};
   return cal.map(d => {
     while (ti < tr.length && tr[ti].d <= d) {
       const t = tr[ti++];
@@ -333,9 +391,16 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;"
 const ymd = d => d.replaceAll("-", "/");
 const md = d => d.slice(5).replace("-", "/");
 const man = v => v >= 10000 && v % 10000 === 0 ? (v / 10000).toLocaleString("ja-JP") + "万円" : yen(v) + "円";
-function nowStamp() { const d = new Date(); const p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
-function dayLabel(date) {
-  if (!S.replay || !S.hideDate) return ymd(date);
+// 日本時間の "YYYY-MM-DD HH:MM"
+const JST_FMT = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+const nowStamp = () => JST_FMT.format(new Date()).slice(0, 16);
+function addDays(d, n) { const t = new Date(d + "T00:00:00Z"); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); }
+const updTime = () => IDX.updated.slice(11, 16);
+function priceLabel(code, ctx, date) {
+  return isPartial(code, ctx) ? `${md(date)} 取引中・${updTime()}時点<span class="live">LIVE</span>` : `${dayLabel(date, ctx)} 終値`;
+}
+function dayLabel(date, ctx = "replay") {
+  if (ctx !== "replay" || !S.replay || !S.hideDate) return ymd(date);
   const n = S.replay.days[date]; return n ? n + "日目" : "開始前";
 }
 // シートが開いているときはトーストをシートの中に置く（背面だと押せないため）
@@ -440,17 +505,29 @@ function homeHTML() {
   </section>
 
   <div class="split mt">
-    <div class="card"><div class="k">現金（買付余力）</div><div class="v">¥${yen(a.cash)}</div></div>
+    <div class="card"><div class="k">現金（買付余力）</div><div class="v">¥${yen(availCash(a, "real"))}</div>
+      ${pend(a).some(o => o.side === "buy") ? `<div class="s flat">予約分 ¥${yen(reservedCash(a, "real"))} を除く</div>` : ""}</div>
     <div class="card"><div class="k">株式の評価額</div><div class="v">¥${yen(s.mv)}</div>
       <div class="s ${tone(s.unreal)}">${nPos ? "評価損益 " + sYen(s.unreal) : "保有なし"}</div></div>
   </div>
+
+  ${pendingHTML(a, "real")}
 
   <div class="sec-h"><h2>資産の内訳</h2></div>
   <div class="card">${compHTML(a, s)}</div>
 
   <div class="sec-h"><h2>保有銘柄</h2><span>${nPos}銘柄</span></div>
   ${nPos ? holdingsList(a, "real") : `<div class="emptybox">まだ株を持っていません。<button class="primary" data-tab="market">銘柄を探す</button></div>`}
-  <p class="foot">株価は ${esc(IDX.updated)} 更新（Yahoo!ファイナンスの日足・終値で約定）</p>`;
+  <p class="foot">株価は ${esc(IDX.updated)} 更新（Yahoo!ファイナンスの日足${IDX.tickers.some(t => t.partial) ? "・取引中は約20分遅れ" : ""}）</p>`;
+}
+
+function pendingHTML(b, ctx, code) {
+  const list = pend(b).filter(o => !code || o.code === code); if (!list.length) return "";
+  return `<div class="sec-h"><h2>予約中の注文</h2><span>${list.length}件</span></div><div class="list">${list.map(o => `
+    <div class="item"><span class="pill ${o.side === "buy" ? "up" : "down"}" style="min-width:40px">${o.side === "buy" ? "買" : "売"}</span>
+      <div class="main"><div class="nm">${esc(tName(o.code))}</div>
+        <div class="sub">${o.qty.toLocaleString()}株・${ctx === "replay" ? "翌日の始値で約定" : md(addDays(o.after, 1)) + "以降の始値で約定"}</div></div>
+      <button class="textbtn danger" data-cancel="${ctx}:${o.id}">取消</button></div>`).join("")}</div>`;
 }
 
 function compHTML(a, s) {
@@ -505,7 +582,7 @@ function marketHTML() {
       <div class="rt"><div class="v">${px(t.close)}</div><span class="pill ${tone(t.chg)}">${pct(t.chg)}</span></div>
     </button>`).join("")}</div>`
     : `<div class="emptybox">${ui.sort === "held" ? "保有している銘柄はありません。" : "見つかりません。銘柄を増やすときは tickers.json に追加します。"}</div>`}
-  <p class="foot">${ymd(latestDate())} 終値・${esc(IDX.updated)} 更新</p>`;
+  <p class="foot">${ymd(latestDate())} ${IDX.tickers.some(t => t.partial) ? "取引中（約20分遅れ）" : "終値"}・${esc(IDX.updated)} 更新</p>`;
 }
 
 function spark(arr, chg) {
@@ -524,7 +601,7 @@ function quoteBlock(code, ctx) {
   <div class="q-head"><div class="cd">${code}・東証</div><div class="nm">${esc(tName(code))}</div></div>
   <div class="q-price"><span class="p">${px(last[4])}<small>円</small></span>
     <span class="c ${tone(chg)}">${prev ? sPx(chg) + "（" + pct(chg / prev[4] * 100) + "）" : ""}</span></div>
-  <div class="q-asof">${dayLabel(last[0])} 終値</div>
+  <div class="q-asof">${priceLabel(code, ctx, last[0])}</div>
   <div class="card chartcard mt">
     <div class="ohlc" id="ohlc"></div>
     <canvas id="cv" role="img" aria-label="ローソク足チャート"></canvas>
@@ -551,6 +628,7 @@ function detailHTML(code) {
   <header class="appbar"><button class="back" data-act="back">${ICON.back}戻る</button></header>
   ${quoteBlock(code, "real")}
   ${positionCard(S.acct, code, "real")}
+  ${pendingHTML(S.acct, "real", code)}
   ${stats}`;
 }
 
@@ -589,6 +667,7 @@ function tradesHTML() {
     <div class="card"><div class="k">確定した損益</div><div class="v ${tone(a.realized)}">${sYen(a.realized)}</div></div>
     <div class="card"><div class="k">取引回数</div><div class="v">${a.trades.length}回</div></div>
   </div>
+  ${pendingHTML(a, "real")}
   ${a.trades.length ? body : `<div class="emptybox mt">まだ取引がありません。銘柄の画面で「買う」を押すとここに記録されます。</div>`}`;
 }
 
@@ -596,7 +675,7 @@ function tradeRow(t) {
   const buy = t.side === "buy";
   return `<button class="item" data-open="${t.code}">
     <span class="pill ${buy ? "up" : "down"}" style="min-width:40px">${buy ? "買" : "売"}</span>
-    <div class="main"><div class="nm">${esc(tName(t.code))}</div><div class="sub">${t.qty.toLocaleString()}株 × ${px(t.p)}円${t.at ? "・" + t.at.slice(11) : ""}</div></div>
+    <div class="main"><div class="nm">${esc(tName(t.code))}</div><div class="sub">${t.qty.toLocaleString()}株 × ${px(t.p)}円${t.open ? "・始値で約定" : t.at ? "・" + t.at.slice(11) : ""}</div></div>
     <div class="rt">${t.pl != null ? `<div class="v ${tone(t.pl)}">${sYen(t.pl)}</div><div class="s flat">確定損益</div>` : `<div class="v">¥${yen(t.p * t.qty)}</div>`}</div>
   </button>`;
 }
@@ -628,7 +707,8 @@ function replayHTML() {
   <button class="tickbtn" data-act="rpicker"><div><div class="nm">${esc(tName(code))}</div><div class="sub">${code}・銘柄を切り替える</div></div>${ICON.chev}</button>
   <div class="mt">${quoteBlock(code, "replay")}</div>
   ${positionCard(r, code, "replay")}
-  <div class="sec-h"><h2>練習中の保有</h2><span>現金 ¥${yen(r.cash)}</span></div>
+  ${pendingHTML(r, "replay")}
+  <div class="sec-h"><h2>練習中の保有</h2><span>買付余力 ¥${yen(availCash(r, "replay"))}</span></div>
   ${Object.keys(r.pos).length ? holdingsList(r, "replay") : `<div class="emptybox">まだ何も持っていません。</div>`}`;
 }
 
@@ -718,7 +798,8 @@ function drawCandles(code, ctx) {
   if (hi_ != null) { const xx = Math.round(x(hi_)) + 0.5; g.strokeStyle = INK; g.globalAlpha = 0.45; g.setLineDash([3, 3]);
     g.beginPath(); g.moveTo(xx, 0); g.lineTo(xx, H - 16); g.stroke(); g.setLineDash([]); g.globalAlpha = 1; }
   const r = rows[hi_ ?? n - 1];
-  document.getElementById("ohlc").innerHTML = `<span>${dayLabel(r[0])}</span><span>始 <b>${px(r[1])}</b></span><span>高 <b>${px(r[2])}</b></span><span>安 <b>${px(r[3])}</b></span><span>終 <b>${px(r[4])}</b></span>`;
+  const cl = (hi_ ?? n - 1) === n - 1 && isPartial(code, ctx) ? "現在" : "終";
+  document.getElementById("ohlc").innerHTML = `<span>${dayLabel(r[0], ctx)}</span><span>始 <b>${px(r[1])}</b></span><span>高 <b>${px(r[2])}</b></span><span>安 <b>${px(r[3])}</b></span><span>${cl} <b>${px(r[4])}</b></span>`;
   cv._geom = { n, x0: 4, w: cw, step };
 }
 
@@ -727,17 +808,29 @@ function openOrder(side, ctx, code) {
   ui.order = { side, ctx, code }; ui.qty = S.unit;
   renderOrder(); const d = document.getElementById("sheet"); if (!d.open) d.showModal();
 }
+function nextOpenLabel(ctx, code) {
+  if (ctx === "replay") return "翌日の始値";
+  const now = nowStamp(), base = now.slice(11) >= "09:00" ? now.slice(0, 10) : addDays(now.slice(0, 10), -1);
+  const last = DATA[code]?.rows.at(-1)?.[0] || ""; return md(addDays(base > last ? base : last, 1)) + "以降の始値";
+}
 function renderOrder() {
   const { side, ctx, code } = ui.order; const b = ctx === "replay" ? S.replay : S.acct;
   const rows = rowsFor(code, ctx), last = rows[rows.length - 1], p = last[4];
-  const pos = b.pos[code]; const buy = side === "buy";
-  const maxQ = buy ? Math.floor(b.cash / p / S.unit) * S.unit : (pos?.qty || 0);
-  const amt = ui.qty * p; const after = buy ? b.cash - amt : b.cash + amt;
+  const buy = side === "buy", open = S.fillMode === "open";
+  const avail = availCash(b, ctx), canSell = sellable(b, code);
+  const maxQ = buy ? Math.floor(avail / p / S.unit) * S.unit : Math.max(0, canSell);
+  const amt = ui.qty * p; const after = buy ? avail - amt : b.cash + amt;
   const over = ui.qty > maxQ;
+  const nowName = ctx === "replay" ? "この日の終値" : isPartial(code, ctx) ? "今の株価" : "最新の終値";
   document.getElementById("sheet").innerHTML = `
   <div class="sheet-h"><h3 class="${buy ? "up" : "down"}">${buy ? "買い注文" : "売り注文"}</h3><button class="textbtn" data-act="close">閉じる</button></div>
   <div class="sheet-b">
-    <div class="ordername"><b>${esc(tName(code))}</b><span>${code}・${px(p)}円（${dayLabel(last[0])} 終値）</span></div>
+    <div class="ordername"><b>${esc(tName(code))}</b><span>${code}・${px(p)}円（${priceLabel(code, ctx, last[0]).replace(/<span.*$/, "")}）</span></div>
+    <span class="field-l">約定のタイミング</span>
+    <div class="modeseg" role="group" aria-label="約定のタイミング">
+      <button data-omode="open" aria-pressed="${open}">次の始値で<small>${nextOpenLabel(ctx, code)}・予約</small></button>
+      <button data-omode="now" aria-pressed="${!open}">すぐ約定<small>${nowName} ${px(p)}円</small></button>
+    </div>
     <label class="field-l" for="oq">株数</label>
     <div class="qtyrow">
       <button class="step" data-ostep="-1" aria-label="${S.unit}株減らす">−</button>
@@ -747,34 +840,51 @@ function renderOrder() {
     <div class="qmeta"><button class="textbtn" data-ofill="${maxQ}">${buy ? "買える最大" : "保有分すべて"} ${maxQ.toLocaleString()}株</button>
       <button class="chip" data-act="unit">${S.unit === 100 ? "100株単位" : "1株単位"}</button></div>
     <dl class="kv">
-      <div><dt>概算約定代金</dt><dd>¥${yen(amt)}</dd></div>
-      <div><dt>${buy ? "買付余力" : "売却できる数量"}</dt><dd>${buy ? "¥" + yen(b.cash) : (pos?.qty || 0).toLocaleString() + "株"}</dd></div>
-      <div><dt>注文後の現金</dt><dd>¥${yen(Math.max(0, after))}</dd></div>
+      <div><dt>${open ? "概算代金（今の株価で計算）" : "約定代金"}</dt><dd>¥${yen(amt)}</dd></div>
+      <div><dt>${buy ? "買付余力" : "売却できる数量"}</dt><dd>${buy ? "¥" + yen(avail) : Math.max(0, canSell).toLocaleString() + "株"}</dd></div>
+      <div><dt>${buy ? "注文後の買付余力" : "売却後の現金（概算）"}</dt><dd>¥${yen(Math.max(0, after))}</dd></div>
     </dl>
-    <div class="err">${over ? (buy ? "現金が足りません。株数を減らしてください。" : "保有している株数を超えています。") : ""}</div>
-    <button class="primary ${buy ? "red" : "blue"}" data-act="place" ${over || maxQ === 0 ? "disabled" : ""}>${buy ? "買い" : "売り"}注文を確定する</button>
-    <p class="sheet-note">${ctx === "replay" ? "表示中の日の終値で約定します（練習用）。" : "最新の終値ですぐに約定します。実際の注文は出ません。手数料はかかりません。"}</p>
+    <div class="err">${over ? (buy ? "買付余力が足りません。株数を減らしてください。" : (canSell < (b.pos[code]?.qty || 0) ? "予約中の売り注文の分を除くと、株数が足りません。" : "保有している株数を超えています。")) : ""}</div>
+    <button class="primary ${buy ? "red" : "blue"}" data-act="place" ${over || maxQ === 0 ? "disabled" : ""}>${open ? (buy ? "買い予約を入れる" : "売り予約を入れる") : (buy ? "買い" : "売り") + "注文を確定する"}</button>
+    <p class="sheet-note">${open
+      ? (ctx === "replay" ? "「翌日へ」を押すと、次の日の始値で約定します。" : "次の取引日の朝、始値で約定します。約定はアプリを開いたときに反映されます。") + "始値は今の株価と違うことがあり、買いで余力が足りなくなった場合は買える分だけ約定します。予約は取り消せます。"
+      : (ctx === "replay" ? "表示中の日の終値ですぐ約定します。" : nowName + "ですぐ約定します。") + "実際の注文は出ません。手数料はかかりません。"}</p>
   </div>`;
 }
 function placeOrder() {
   const { side, ctx, code } = ui.order; const b = ctx === "replay" ? S.replay : S.acct;
   const rows = rowsFor(code, ctx), last = rows[rows.length - 1], p = last[4], n = ui.qty;
-  const pos = b.pos[code] || { qty: 0, cost: 0 };
+  if (side === "buy" ? p * n > availCash(b, ctx) + 1e-6 : sellable(b, code) < n) return;
+  const sideName = side === "buy" ? "買い" : "売り";
+  if (S.fillMode === "open") {
+    let after;
+    if (ctx === "replay") after = S.replay.date;
+    else {
+      const now = nowStamp(), base = now.slice(11) >= "09:00" ? now.slice(0, 10) : addDays(now.slice(0, 10), -1);
+      const lastD = DATA[code]?.rows.at(-1)?.[0] || ""; after = base > lastD ? base : lastD;
+    }
+    pend(b).push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), code, side, qty: n, unit: S.unit,
+                   placedAt: ctx === "replay" ? null : nowStamp(), after });
+    save(); document.getElementById("sheet").close();
+    toast(`${sideName}を予約しました（${nextOpenLabel(ctx, code)}）`);
+    render(); return;
+  }
   const rec = { d: last[0], code, side, qty: n, p };
   if (ctx === "replay") rec.day = S.replay.day; else rec.at = nowStamp();
-  if (side === "buy") {
-    if (p * n > b.cash + 1e-6) return;
-    b.cash -= p * n; pos.qty += n; pos.cost += p * n; b.pos[code] = pos;
-  } else {
-    if (pos.qty < n) return;
-    const avg = pos.cost / pos.qty, pl = (p - avg) * n;
-    b.cash += p * n; b.realized += pl; pos.qty -= n; pos.cost -= avg * n; rec.pl = pl;
-    if (pos.qty <= 0) delete b.pos[code]; else b.pos[code] = pos;
-  }
-  b.trades.unshift(rec); if (b.trades.length > 2000) b.trades.length = 2000;
+  execTrade(b, code, side, n, p, rec);
   save(); document.getElementById("sheet").close();
-  toast(`約定しました：${tName(code)} ${n.toLocaleString()}株 ${side === "buy" ? "買い" : "売り"}${rec.pl != null ? "（" + sYen(rec.pl) + "円）" : ""}`);
+  toast(`約定しました：${tName(code)} ${n.toLocaleString()}株 ${sideName}${rec.pl != null ? "（" + sYen(rec.pl) + "円）" : ""}`);
   render();
+}
+function fillResultSheet(res) {
+  openSheet(`<div class="sheet-h"><h3>予約注文の結果</h3><button class="textbtn" data-act="close">閉じる</button></div>
+  <div class="sheet-b"><div class="list" style="box-shadow:none">${res.map(r => `
+    <div class="item"><span class="pill ${r.o.side === "buy" ? "up" : "down"}" style="min-width:40px">${r.o.side === "buy" ? "買" : "売"}</span>
+      <div class="main"><div class="nm">${esc(tName(r.o.code))}</div>
+        <div class="sub">${r.n ? `${r.n.toLocaleString()}株 × ${px(r.p)}円（${md(r.d)} 始値）` : `${md(r.d)} 始値 ${px(r.p)}円`}</div>
+        ${r.note ? `<div class="sub danger">${r.note}</div>` : ""}</div>
+      <div class="rt">${r.pl != null ? `<div class="v ${tone(r.pl)}">${sYen(r.pl)}</div><div class="s flat">確定損益</div>` : r.n ? `<div class="v">¥${yen(r.n * r.p)}</div>` : ""}</div></div>`).join("")}</div>
+  <button class="primary mt" data-act="close">閉じる</button></div>`);
 }
 
 /* ================= シート（設定・銘柄選択・結果） ================= */
@@ -820,7 +930,13 @@ async function replayAdvance(k) {
   let i = upto(cal.rows, r.date);
   if (i >= cal.rows.length) { toast("データの最後まで来ました"); replayEnd(); return; }
   for (let s = 0; s < k && i < cal.rows.length; s++, i++) { r.day += 1; r.date = cal.rows[i][0]; r.days[r.date] = r.day; }
-  await ensure(Object.keys(r.pos)); ui.hover = null; save(); render();
+  await ensure([...Object.keys(r.pos), ...pend(r).map(o => o.code)]);
+  const res = fillPending(r, "replay");
+  ui.hover = null; save(); render();
+  if (res.length) {
+    const f = res[0], more = res.length > 1 ? `ほか${res.length - 1}件` : "";
+    toast(f.n ? `始値で約定：${tName(f.o.code)} ${f.n.toLocaleString()}株 ${f.o.side === "buy" ? "買い" : "売り"} ${px(f.p)}円${f.note ? "（一部）" : ""}${more}` : `予約が失効：${tName(f.o.code)}（${f.note}）${more}`);
+  }
 }
 function replayEnd() {
   const r = S.replay, s = summary(r, "replay"); const d = DATA[S.replayCode];
@@ -900,6 +1016,11 @@ document.addEventListener("click", async e => {
   if (ds.range) { S.range = +ds.range; ui.hover = null; save(); return render(); }
   if (ds.sort) { ui.sort = ds.sort; return render(); }
   if (ds.order) return openOrder(ds.order, ui.detail ? "real" : "replay", ui.detail || S.replayCode);
+  if (ds.omode) { S.fillMode = ds.omode; save(); return renderOrder(); }
+  if (ds.cancel) {
+    const [ctx, id] = ds.cancel.split(":"); const b = ctx === "replay" ? S.replay : S.acct;
+    b.pending = pend(b).filter(o => o.id !== id); save(); render(); toast("予約を取り消しました"); return;
+  }
   if (ds.ostep) { ui.qty = Math.max(S.unit, ui.qty + (+ds.ostep) * S.unit); return renderOrder(); }
   if (ds.ofill) { ui.qty = Math.max(S.unit, +ds.ofill); return renderOrder(); }
   if (ds.rcash) { S.replayCash = +ds.rcash; save(); return render(); }
@@ -965,11 +1086,19 @@ async function boot() {
   try { IDX = await getJSON("index.json"); }
   catch { app.innerHTML = `<div class="state">株価データを読み込めませんでした。<br>通信状態を確認して、もう一度開いてください。<br><br><button class="primary" style="max-width:220px;margin:0 auto" onclick="location.reload()">再読み込み</button></div>`; return; }
   if (!tInfo(S.replayCode)) S.replayCode = IDX.tickers[0].code;
-  const need = [CAL, ...(S.acct ? Object.keys(S.acct.pos) : []), ...(S.acct ? S.acct.trades.map(t => t.code) : []),
-                ...(S.replay ? [S.replayCode, ...Object.keys(S.replay.pos)] : [])];
+  const need = [CAL, ...(S.acct ? [...Object.keys(S.acct.pos), ...S.acct.trades.map(t => t.code), ...pend(S.acct).map(o => o.code)] : []),
+                ...(S.replay ? [S.replayCode, ...Object.keys(S.replay.pos), ...pend(S.replay).map(o => o.code)] : [])];
   await ensure(need);
+  const res = S.acct ? fillPending(S.acct, "real") : [];
+  if (res.length) save();
   render();
+  if (res.length) fillResultSheet(res);
 }
+// アプリを開き直したとき（バックグラウンドから戻ったとき）に、新しいデータがあれば読み直す
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState !== "visible" || !IDX || document.getElementById("sheet").open) return;
+  try { const n = await getJSON("index.json"); if (n.updated !== IDX.updated) location.reload(); } catch {}
+});
 boot();
 })();
 </script>
