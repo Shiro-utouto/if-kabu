@@ -50,5 +50,10 @@ jobs:
             exit 0
           fi
           git commit -m "株価データ更新 $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M')"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          # 途中で別のコミットが入っていても、今回取ったデータを優先して押し込む（最大3回）
+          for i in 1 2 3; do
+            git pull --rebase -X theirs origin main && git push origin HEAD:main && exit 0
+            git rebase --abort 2>/dev/null || true
+            sleep $((i * 10))
+          done
+          exit 1
